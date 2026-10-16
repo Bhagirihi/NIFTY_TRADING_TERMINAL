@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-16",
+  "trades": [
+    {
+      "index": "BANKNIFTY",
+      "indexId": "BANKNIFTY",
+      "side": "BUY PE",
+      "strike": 55700,
+      "right": "PE",
+      "qty": 30,
+      "entryTime": "09:20",
+      "entryT": 1792122600000,
+      "entryPremium": 559.6,
+      "investment": 16788,
+      "stopLoss": 56018.24,
+      "target": 55168.2,
+      "entryReason": "5-minute close confirms the open trend",
+      "status": "OPEN",
+      "markPremium": 559.1,
+      "premiumPoints": -0.5,
+      "pnl": -15
+    },
+    {
+      "index": "NIFTY 50",
+      "indexId": "NIFTY",
+      "side": "BUY CE",
+      "strike": 23000,
+      "right": "CE",
+      "qty": 65,
+      "entryTime": "09:25",
+      "entryT": 1792122900000,
+      "entryPremium": 83.6,
+      "investment": 5434,
+      "stopLoss": 22925.19,
+      "target": null,
+      "entryReason": "5-minute close confirms the open trend",
+      "status": "CLOSED",
+      "exitTime": "09:30",
+      "exitT": 1792123200000,
+      "exitPremium": 85.95,
+      "exitReason": "Close crossed EMA 13",
+      "premiumPoints": 2.35,
+      "pnl": 152.75
+    }
+  ],
+  "realized": 152.75,
+  "unrealized": -15,
+  "total": 137.75,
+  "earlyMarks": {
+    "NIFTY": {
+      "day": "2026-10-16",
+      "t": 1792122900000,
+      "premium": 83.6,
+      "strike": 23000,
+      "right": "CE"
+    },
+    "BANKNIFTY": {
+      "day": "2026-10-16",
+      "t": 1792122600000,
+      "premium": 559.6,
+      "strike": 55700,
+      "right": "PE"
+    }
+  },
+  "savedAt": "2026-10-16T04:22:35.850Z"
+}

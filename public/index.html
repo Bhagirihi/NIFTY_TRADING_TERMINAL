@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0e14" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>NIFTY / BANKNIFTY — Supertrend Live</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141926; --line:#232a3d; --txt:#e6e9f0; --dim:#8b93a7; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; padding:14px max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left)); border-bottom:1px solid var(--line); }
+  h1 { font-size:17px; margin:0; font-weight:650; }
+  .badge { font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); }
+  .badge.live { color:var(--green); border-color:var(--green); }
+  .badge.warn { color:var(--amber); border-color:var(--amber); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr)); gap:14px; padding:14px; }
+  .section { padding:0 14px 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card h2 { margin:0 0 2px; font-size:16px; display:flex; flex-wrap:wrap; gap:4px 12px; justify-content:space-between; align-items:baseline; }
+  .ltp { font-size:26px; font-weight:700; }
+  .up { color:var(--green); } .down { color:var(--red); }
+  .rows { display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; margin:10px 0; font-size:13.5px; }
+  .rows span { color:var(--dim); }
+  .rows b { font-weight:600; text-align:right; }
+  .trend { font-weight:700; }
+  .levels { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:10px 0 2px; }
+  .lvl { border-radius:8px; padding:7px 10px; background:#10182a; border:1px solid var(--line); min-width:0; }
+  .lvl span { display:block; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
+  .lvl b { display:block; margin-top:2px; font-size:16px; font-weight:750; overflow:hidden; text-overflow:ellipsis; }
+  .lvl.strike { border-color:#3b82f6; background:#172554; }
+  .lvl.strike b { color:#dbeafe; }
+  .lvl.sup { border-color:#06b6d4; background:#083344; }
+  .lvl.sup b { color:#cffafe; }
+  .lvl.res { border-color:#d946ef; background:#3b0764; }
+  .lvl.res b { color:#fae8ff; }
+  .held { background:#1d4ed8; color:#fff; border-radius:5px; padding:1px 6px; }
+  .pos { border-radius:8px; padding:9px 11px; font-size:13.5px; margin:8px 0; background:#1b2334; border:1px solid var(--line); }
+  .pos.long { border-color:var(--green); } .pos.short { border-color:var(--red); }
+  .predict { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; margin:8px 0 0; padding:8px 10px; border-radius:8px; background:#10182a; border:1px solid var(--line); font-size:13px; }
+  .predict span { color:var(--dim); }
+  .predict b { font-size:14px; }
+  canvas { width:100%; height:170px; display:block; background:#0e1220; border-radius:8px; }
+  .scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--dim); font-weight:600; }
+  .sig-long { color:var(--green); font-weight:700; } .sig-short { color:var(--red); font-weight:700; }
+  .sig-exit { color:var(--amber); font-weight:700; } .sig-sq { color:#c084fc; font-weight:700; }
+  footer { padding:0 max(18px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); color:var(--dim); font-size:12px; }
+  @media (max-width: 640px) {
+    h1 { font-size:15px; }
+    .grid { padding:10px; gap:10px; }
+    .section { padding:0 10px 10px; }
+    .card { padding:12px; }
+    .ltp { font-size:22px; }
+    .rows { gap:6px 10px; font-size:13px; }
+    .levels { gap:6px; }
+    .lvl { padding:6px 8px; }
+    .lvl b { font-size:14px; }
+    table { font-size:12px; }
+    th, td { padding:6px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>NIFTY 50 / BANKNIFTY — Supertrend Strategy (live)</h1>
+  <div>
+    <span class="badge" id="sourceBadge">connecting…</span>
+    <span class="badge" id="updatedAt"></span>
+  </div>
+</header>
+
+<div class="grid" id="cards"></div>
+
+<div class="section">
+  <div class="card">
+    <h2>Paper trades <span id="paperTotal" style="font-size:14px;"></span></h2>
+    <p style="color:var(--dim);font-size:12.5px;margin:6px 0 10px;">Books the signal at that bar's option premium and sells it on EXIT or square-off. Both calls and puts are bought, so the result is the premium change times quantity. No order is sent.</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Index</th><th>Strike</th><th>Entry</th><th>Premium in</th><th>Qty</th><th>Investment</th><th>Exit</th><th>Premium out</th><th>Pts</th><th>P&amp;L</th><th>Status</th></tr></thead>
+      <tbody id="paperBody"><tr><td colspan="11" style="color:var(--dim)">No paper trades yet today.</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="card">
+    <h2>Today's signals</h2>
+    <p style="color:var(--dim);font-size:12.5px;margin:6px 0 10px;">Strike is the nearest listed option. Premium is that contract at the signal bar. A 15-minute close through the Supertrend stop, the ratcheted trailing stop, the pivot target, or the ATR trailing target closes the paper trade.</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Time (IST)</th><th>Index</th><th>Signal</th><th>Strike</th><th>Premium</th><th>Stop</th><th>Target</th><th>Points</th><th>Reason</th></tr></thead>
+      <tbody id="signalsBody"><tr><td colspan="9" style="color:var(--dim)">No signals yet today.</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Signals only — this dashboard never places orders. Entries/exits are booked at the signal bar's close
+  (15-minute bars, bar-close convention). From 09:15 to 09:30 the first 5-minute candle that closes with the trend books the entry. After 09:30, entries and exits follow the 15-minute Supertrend. Supertrend 10 / 3.0 stop and trail, pivot target, ATR trailing target, EMA-13, 15:10 square-off.
+</footer>
+
+<script>
+const fmt = (x, d=2) => x == null || Number.isNaN(x) ? '—' : Number(x).toLocaleString('en-IN', {minimumFractionDigits:d, maximumFractionDigits:d});
+const fmtStrike = (strike, right) => strike == null ? '—' : Number(strike).toLocaleString('en-IN', {maximumFractionDigits:0}) + (right ? ' ' + right : '');
+
+function drawChart(canvas, chart) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.clientWidth * devicePixelRatio;
+  const H = canvas.height = 170 * devicePixelRatio;
+  ctx.clearRect(0, 0, W, H);
+  if (!chart || chart.length < 2) return;
+  const vals = [];
+  for (const p of chart) { vals.push(p.close); if (p.st != null) vals.push(p.st); if (p.ema != null) vals.push(p.ema); }
+  let min = Math.min(...vals), max = Math.max(...vals);
+  const pad = (max - min) * 0.08 || 1; min -= pad; max += pad;
+  const X = i => (i / (chart.length - 1)) * (W - 8) + 4;
+  const Y = v => H - ((v - min) / (max - min)) * (H - 12) - 6;
+  // EMA (yellow-ish)
+  ctx.beginPath(); ctx.strokeStyle = '#eab308'; ctx.lineWidth = 1 * devicePixelRatio;
+  chart.forEach((p, i) => { if (p.ema == null) return; i === 0 ? ctx.moveTo(X(i), Y(p.ema)) : ctx.lineTo(X(i), Y(p.ema)); });
+  ctx.stroke();
+  // Supertrend (segment colour by direction)
+  ctx.lineWidth = 1.6 * devicePixelRatio;
+  for (let i = 1; i < chart.length; i++) {
+    const a = chart[i-1], b = chart[i];
+    if (a.st == null || b.st == null) continue;
+    ctx.beginPath(); ctx.strokeStyle = b.dir < 0 ? '#22c55e' : '#ef4444';
+    ctx.moveTo(X(i-1), Y(a.st)); ctx.lineTo(X(i), Y(b.st)); ctx.stroke();
+  }
+  // Close (white)
+  ctx.beginPath(); ctx.strokeStyle = '#e6e9f0'; ctx.lineWidth = 1.2 * devicePixelRatio;
+  chart.forEach((p, i) => { i === 0 ? ctx.moveTo(X(i), Y(p.close)) : ctx.lineTo(X(i), Y(p.close)); });
+  ctx.stroke();
+}
+
+function currentStrike(id, s) {
+  if (s.atmStrike != null) return s.atmStrike;
+  if (s.ltp == null || Number.isNaN(Number(s.ltp))) return null;
+  const step = id === 'BANKNIFTY' ? 100 : 50;
+  return Math.round(Number(s.ltp) / step) * step;
+}
+
+function levelsHtml(id, s) {
+  const strike = fmtStrike(currentStrike(id, s));
+  return `<div class="levels">
+    <div class="lvl strike"><span>Strike</span><b data-field="atm">${strike}</b></div>
+    <div class="lvl sup"><span>Support</span><b>${fmt(s.support)}</b></div>
+    <div class="lvl res"><span>Resistance</span><b>${fmt(s.resistance)}</b></div>
+  </div>`;
+}
+function predictHtml(s) {
+  const p = s.prediction;
+  if (!p) return '';
+  const cls = p.side === 'CALL' ? 'up' : p.side === 'PUT' ? 'down' : '';
+  const bits = (p.windows || []).map((w) => {
+    if (!w.ready) return w.minutes + 'm …';
+    const word = w.bias === 'CALL' ? 'above' : w.bias === 'PUT' ? 'below' : 'inside';
+    return w.minutes + 'm ' + word;
+  }).join(' · ');
+  const lead = (p.windows || []).find((w) => w.minutes === p.minutes && w.ready);
+  const range = lead ? ' ' + fmt(lead.low) + ' – ' + fmt(lead.high) : '';
+  const head = p.minutes ? p.label + ' · ' + p.minutes + 'm open' + range : p.label;
+  return `<div class="predict"><span>Open read</span><b class="${cls}">${head}</b><span>${bits}</span></div>`;
+}
+
+function sigClass(type) {
+  if (type === 'BUY CE') return 'sig-long';
+  if (type === 'BUY PE') return 'sig-short';
+  if (type === 'SQOFF') return 'sig-sq';
+  return 'sig-exit';
+}
+
+let lastStructure = '';
+
+function positionHtml(s) {
+  if (!s.position) return '<div class="pos" data-field="pos">No open position</div>';
+  const p = s.position;
+  const cls = p.side === 'LONG' ? 'long' : 'short';
+  const ptsCls = p.openPoints == null ? '' : p.openPoints >= 0 ? 'up' : 'down';
+  return `<div class="pos ${cls}" data-field="pos"><b>${p.label}</b> <b class="held">${fmtStrike(p.strike, p.right)}</b> · now <b data-field="premium">${fmt(p.premium)}</b> · stop ${fmt(p.stopLoss)} · trail stop ${fmt(p.trailingStop)} · target ${fmt(p.target)} · trail target ${fmt(p.trailingTarget)} · qty ${p.qty} · open <b class="${ptsCls}" data-field="openpts">${fmt(p.openPoints)} pts</b></div>`;
+}
+
+function structureKey(state) {
+  const slim = {};
+  for (const [id, s] of Object.entries(state.symbols || {})) {
+    const p = s.position;
+    const pred = s.prediction;
+    slim[id] = [s.lastCandleTimeIST, s.supertrend, s.direction, s.ema13, s.support, s.resistance, s.dayPoints, p && p.side, p && p.strike, p && p.stopLoss, p && p.trailingStop, p && p.target, p && p.trailingTarget, p && p.entryTimeIST, pred && pred.label, pred && pred.minutes, (pred && pred.windows || []).map((w) => w.bias).join(','), (s.signalsToday || []).map((x) => [x.t, x.type, x.strike, x.premium, x.stopLoss, x.target].join('|')).join(','), (s.chart || []).length];
+  }
+  const fills = (state.paper && state.paper.trades || []).map((t) => [t.indexId, t.entryT, t.status, t.entryPremium, t.exitPremium].join('|')).join(';');
+  return JSON.stringify([state.status, state.source, state.feed, state.error, slim, fills]);
+}
+
+function paintBadge(state) {
+  const badge = document.getElementById('sourceBadge');
+  const srcNames = { UPSTOX: 'UPSTOX', ANGELONE: 'ANGEL ONE — LIVE', FIXTURE: 'FIXTURE — TEST DATA (not live)' };
+  const label = state.status === 'error'
+    ? ('ERROR: ' + (state.error || ''))
+    : state.feed === 'upstox'
+      ? 'UPSTOX — REALTIME'
+      : (srcNames[state.source] || 'connecting…');
+  badge.textContent = label;
+  badge.className = 'badge' + (state.feed === 'upstox' || state.source === 'UPSTOX' || state.source === 'ANGELONE' ? ' live' : ' warn');
+  document.getElementById('updatedAt').textContent = state.updatedAt ? 'Updated ' + state.updatedAt : '';
+}
+
+function patchPrices(state) {
+  for (const [id, s] of Object.entries(state.symbols || {})) {
+    const card = document.querySelector(`.card[data-symbol="${id}"]`);
+    if (!card) return false;
+    const ltp = card.querySelector('[data-field="ltp"]');
+    const chg = card.querySelector('[data-field="chg"]');
+    const pos = card.querySelector('[data-field="pos"]');
+    if (ltp) {
+      const text = fmt(s.ltp);
+      if (ltp.textContent !== text) ltp.textContent = text;
+    }
+    if (chg) {
+      const cls = s.change == null ? '' : s.change >= 0 ? 'up' : 'down';
+      const text = s.change == null ? '' : (s.change >= 0 ? '+' : '') + fmt(s.change) + ' (' + (s.changePct >= 0 ? '+' : '') + fmt(s.changePct) + '%) today';
+      if (chg.className !== cls) chg.className = cls;
+      if (chg.textContent !== text) chg.textContent = text;
+    }
+    const prem = card.querySelector('[data-field="premium"]');
+    if (prem && s.position) {
+      const text = fmt(s.position.premium);
+      if (prem.textContent !== text) prem.textContent = text;
+    }
+    const atm = card.querySelector('[data-field="atm"]');
+    if (atm) {
+      const text = fmtStrike(currentStrike(id, s));
+      if (atm.textContent !== text) atm.textContent = text;
+    }
+    const openPts = card.querySelector('[data-field="openpts"]');
+    if (openPts && s.position) {
+      const text = fmt(s.position.openPoints) + ' pts';
+      const cls = s.position.openPoints == null ? '' : s.position.openPoints >= 0 ? 'up' : 'down';
+      if (openPts.className !== cls) openPts.className = cls;
+      if (openPts.textContent !== text) openPts.textContent = text;
+    } else if (pos && !s.position) {
+      pos.outerHTML = positionHtml(s);
+    }
+  }
+  return true;
+}
+
+function invested(t) {
+  if (t.investment != null && Number.isFinite(Number(t.investment))) return Number(t.investment);
+  if (t.entryPremium == null || t.qty == null) return null;
+  const n = Number(t.entryPremium) * Number(t.qty);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+
+function money(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  const sign = n > 0 ? '+' : '';
+  return sign + fmt(n);
+}
+
+function patchPaper(state) {
+  const paper = state.paper;
+  if (!paper) return;
+  const total = document.getElementById('paperTotal');
+  if (total) {
+    const cls = paper.total >= 0 ? 'up' : 'down';
+    total.className = cls;
+    total.textContent = money(paper.total);
+  }
+  for (const t of paper.trades || []) {
+    if (t.status !== 'OPEN') continue;
+    const row = document.querySelector(`tr[data-paper-row="${t.indexId}"]`);
+    if (!row) continue;
+    const mark = row.querySelector('[data-field="mark"]');
+    const pnl = row.querySelector('[data-field="pnl"]');
+    const pts = row.querySelector('[data-field="pts"]');
+    if (mark) mark.textContent = fmt(t.markPremium);
+    if (pts) pts.textContent = t.premiumPoints == null ? '—' : fmt(t.premiumPoints);
+    if (pnl) {
+      pnl.textContent = money(t.pnl);
+      pnl.className = t.pnl == null ? '' : t.pnl >= 0 ? 'up' : 'down';
+    }
+  }
+}
+
+function renderPaper(state) {
+  const paper = state.paper || { trades: [] };
+  const total = document.getElementById('paperTotal');
+  if (total) {
+    total.className = paper.total >= 0 ? 'up' : 'down';
+    total.textContent = paper.trades.length ? money(paper.total) : '';
+  }
+  const body = document.getElementById('paperBody');
+  const rows = paper.trades || [];
+  body.innerHTML = rows.length ? '' : '<tr><td colspan="11" style="color:var(--dim)">No paper trades yet today.</td></tr>';
+  for (const t of rows) {
+    const tr = document.createElement('tr');
+    if (t.status === 'OPEN') tr.dataset.paperRow = t.indexId;
+    const pnlCls = t.pnl == null ? '' : t.pnl >= 0 ? 'up' : 'down';
+    const exitPx = t.status === 'OPEN' ? `<span data-field="mark">${fmt(t.markPremium)}</span>` : fmt(t.exitPremium);
+    tr.innerHTML = `<td>${t.index}</td><td>${fmtStrike(t.strike, t.right)}</td><td>${t.entryTime}</td><td>${fmt(t.entryPremium)}</td><td>${t.qty == null ? '—' : t.qty}</td><td>${fmt(invested(t))}</td><td>${t.exitTime || '—'}</td><td>${exitPx}</td><td data-field="pts">${t.premiumPoints == null ? '—' : fmt(t.premiumPoints)}</td><td class="${pnlCls}" data-field="pnl">${money(t.pnl)}</td><td class="${t.status === 'OPEN' ? 'sig-long' : 'sig-exit'}">${t.status === 'OPEN' ? 'OPEN' : t.exitReason || 'CLOSED'}</td>`;
+    body.appendChild(tr);
+  }
+}
+
+function render(state) {
+  paintBadge(state);
+  const key = structureKey(state);
+  if (key === lastStructure && patchPrices(state)) {
+    patchPaper(state);
+    return;
+  }
+  lastStructure = key;
+
+  const wrap = document.getElementById('cards');
+  wrap.innerHTML = '';
+  const allSignals = [];
+  for (const [id, s] of Object.entries(state.symbols || {})) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.symbol = id;
+    const chgCls = s.change == null ? '' : s.change >= 0 ? 'up' : 'down';
+    const trendTxt = s.direction == null ? '—' : s.direction < 0 ? '<span class="trend up">BULLISH</span>' : '<span class="trend down">BEARISH</span>';
+    card.innerHTML = `
+      <h2>${s.name} <span class="ltp" data-field="ltp">${fmt(s.ltp)}</span></h2>
+      <div data-field="chg" class="${chgCls}" style="font-size:13px;">${s.change == null ? '' : (s.change >= 0 ? '+' : '') + fmt(s.change) + ' (' + (s.changePct >= 0 ? '+' : '') + fmt(s.changePct) + '%) today'}</div>
+      ${levelsHtml(id, s)}
+      ${predictHtml(s)}
+      <div class="rows">
+        <span>Supertrend</span><b>${fmt(s.supertrend)}</b>
+        <span>Trend</span><b>${trendTxt}</b>
+        <span>EMA 13</span><b>${fmt(s.ema13)}</b>
+        <span>Last closed candle</span><b>${s.lastCandleTimeIST || '—'} IST</b>
+        <span>Day P&amp;L (closed trades)</span><b class="${s.dayPoints >= 0 ? 'up' : 'down'}">${fmt(s.dayPoints)} pts</b>
+      </div>
+      ${positionHtml(s)}
+      <canvas></canvas>`;
+    wrap.appendChild(card);
+    drawChart(card.querySelector('canvas'), s.chart);
+    for (const sig of s.signalsToday || []) allSignals.push({ ...sig, index: s.name });
+  }
+  allSignals.sort((a, b) => a.t - b.t);
+  const body = document.getElementById('signalsBody');
+  body.innerHTML = allSignals.length ? '' : '<tr><td colspan="9" style="color:var(--dim)">No signals yet today.</td></tr>';
+  for (const sig of allSignals) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${sig.timeIST}</td><td>${sig.index}</td><td class="${sigClass(sig.type)}">${sig.type}</td><td>${fmtStrike(sig.strike, sig.right)}</td><td>${fmt(sig.premium)}</td><td>${fmt(sig.stopLoss)}</td><td>${fmt(sig.target)}</td><td>${sig.points == null ? '—' : fmt(sig.points)}</td><td>${sig.reason || ''}</td>`;
+    body.appendChild(tr);
+  }
+  renderPaper(state);
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}`);
+  ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === 'state') render(m.state); };
+  ws.onclose = () => setTimeout(connect, 3000);
+  ws.onerror = () => ws.close();
+}
+connect();
+setInterval(() => fetch('/api/state').then(r => r.json()).then(render).catch(() => {}), 15000);
+</script>
+</body>
+</html>
