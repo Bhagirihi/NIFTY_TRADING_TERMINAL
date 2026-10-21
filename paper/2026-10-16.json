@@ -15,10 +15,13 @@
       "stopLoss": 56018.24,
       "target": 55168.2,
       "entryReason": "5-minute close confirms the open trend",
-      "status": "OPEN",
-      "markPremium": 559.1,
-      "premiumPoints": -0.5,
-      "pnl": -15
+      "status": "CLOSED",
+      "exitTime": "10:00",
+      "exitT": 1792125000000,
+      "exitPremium": null,
+      "exitReason": "Close crossed EMA 13",
+      "premiumPoints": null,
+      "pnl": null
     },
     {
       "index": "NIFTY 50",
@@ -37,15 +40,15 @@
       "status": "CLOSED",
       "exitTime": "09:30",
       "exitT": 1792123200000,
-      "exitPremium": 85.95,
+      "exitPremium": null,
       "exitReason": "Close crossed EMA 13",
-      "premiumPoints": 2.35,
-      "pnl": 152.75
+      "premiumPoints": null,
+      "pnl": null
     }
   ],
-  "realized": 152.75,
-  "unrealized": -15,
-  "total": 137.75,
+  "realized": 0,
+  "unrealized": 0,
+  "total": 0,
   "earlyMarks": {
     "NIFTY": {
       "day": "2026-10-16",
@@ -62,5 +65,5 @@
       "right": "PE"
     }
   },
-  "savedAt": "2026-10-16T04:22:35.850Z"
+  "savedAt": "2026-10-16T06:25:53.046Z"
 }

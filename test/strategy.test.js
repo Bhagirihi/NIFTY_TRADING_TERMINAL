@@ -6,7 +6,7 @@ const { rmaSeries, emaSeries, pivotLevels } = require('../src/indicators');
 const { supertrendSeries } = require('../src/supertrend');
 const { runStrategy, marketExitReason, refreshLevels } = require('../src/strategy');
 const { totp } = require('../src/data/angelone');
-const { istParts, istToEpoch } = require('../src/time');
+const { istParts, istToEpoch, istTimeStr } = require('../src/time');
 
 const approx = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
 
@@ -168,6 +168,44 @@ test('market exits follow stop, trailing stop, target, then trailing target', ()
   assert.strictEqual(open.target, 125);
   assert.strictEqual(open.trailOn, true);
   assert.ok(open.trailingTarget < open.peak);
+});
+
+test('Strategy: a locked live exit keeps the trigger price after the candle moves', () => {
+  const closes = [];
+  for (let i = 0; i < 12; i++) closes.push(116 + i);
+  const candles = dayCandles(closes);
+  const last = candles[candles.length - 1];
+  last.close = 140;
+  const locks = [{
+    barT: last.t,
+    t: last.t + 5 * 60000,
+    timeIST: '12:05',
+    type: 'EXIT CE',
+    side: 'LONG',
+    price: 121.5,
+    reason: 'Stop loss',
+  }];
+  const run = runStrategy(candles, 25, { locks, liveBarT: last.t, now: last.t + 6 * 60000 });
+  const exit = run.signals.find((s) => s.type === 'EXIT CE' && s.barT === last.t);
+  assert.ok(exit, 'locked exit is kept');
+  assert.strictEqual(exit.price, 121.5);
+  assert.strictEqual(exit.timeIST, '12:05');
+  assert.strictEqual(run.position, null);
+});
+
+test('Strategy: the live 15:00 candle squares off when the clock hits 15:10', () => {
+  const closes = [];
+  for (let i = 0; i < 24; i++) closes.push(116 + i * 0.8);
+  const candles = dayCandles(closes);
+  const bar = candles[candles.length - 1];
+  assert.strictEqual(istTimeStr(bar.t), '15:00');
+  const before = runStrategy(candles, 25);
+  assert.ok(before.position, '15:00 bar is still open before 15:10');
+  const live = runStrategy(candles, 25, { liveBarT: bar.t, now: bar.t + 12 * 60000 });
+  const today = live.signals.filter((s) => s.dateKey === '2026-10-15');
+  assert.strictEqual(today[today.length - 1].type, 'SQOFF');
+  assert.strictEqual(today[today.length - 1].timeIST, '15:12');
+  assert.strictEqual(live.position, null);
 });
 
 test('Strategy: levels on an open trade are present and the trail stop does not loosen', () => {

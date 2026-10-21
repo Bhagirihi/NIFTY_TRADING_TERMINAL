@@ -12,19 +12,22 @@ const { istParts, istDateKey, istTimeStr } = require('./time');
 //                      opens with direction already bullish.
 //     BUY PE (short) : Supertrend flips bearish (direction > 0), OR the 09:15 bar
 //                      opens with direction already bearish.
-//   Dynamic exit, all from the market on each closed bar:
-//     Stop loss        : Supertrend at entry. A later close through it exits.
-//     Trailing stop    : the Supertrend ratcheted in the trade's favor. A close
-//                        through the tighter level exits.
+//   Dynamic exit, all from the market:
+//     Stop loss        : Supertrend at entry. Price through it exits.
+//     Trailing stop    : the Supertrend ratcheted in the trade's favor.
 //     Target           : the latest confirmed pivot beyond price (resistance for
-//                        a call, support for a put). A close through it exits.
+//                        a call, support for a put). Price through it exits.
 //     Trailing target  : after the trade has earned the initial stop distance,
 //                        a pullback of one current ATR from the best close exits.
-//     EMA 13           : a close through EMA 13 still exits if none of the above did.
-//   Square-off: any open position is closed on the first bar at/after 15:10 IST,
-//               and no new entries are taken at/after 15:10 (the Pine block's intent).
-//   Paper convention (same as the nightly paper log): entries/exits are booked at
-//   the signal bar's CLOSE. Exits are evaluated from the bar after entry.
+//     EMA 13           : price through EMA 13 exits if none of the above did.
+//   A finished bar is judged on its close, and the exit waits for a later bar.
+//   The bar still trading is judged on its live close. The first break is kept
+//   (opts.locks) so a later tick cannot erase it. A same-bar exit waits until
+//   price has moved off the entry print.
+//   Square-off: an open trade is closed at 15:10 IST. The live bar uses the
+//   clock; a finished bar uses its open time. No new entry at or after 15:10.
+//   Entries and exits are booked at the signal price. On a finished bar that
+//   price is the close. On the live bar it is the price at the moment.
 //
 // Pine defaults kept: ST period 10, multiplier 3.0, EMA length 13,
 // pivot left/right 15/15. Lot size is passed in (Nifty 65, Bank Nifty 30).
@@ -107,7 +110,23 @@ function marketExitReason(position, close) {
   return null;
 }
 
+function lockedLevels(lock, side, price, i, st, sr) {
+  const lv = lock && lock.levels;
+  if (!lv) return seedLevels(side, price, i, st, sr);
+  return {
+    initialStop: lv.initialStop ?? null,
+    stopLoss: lv.stopLoss ?? null,
+    trailingStop: lv.trailingStop ?? null,
+    target: lv.target ?? null,
+    trailingTarget: lv.trailingTarget ?? null,
+    peak: Number.isFinite(lv.peak) ? lv.peak : price,
+    trailOn: !!lv.trailOn,
+  };
+}
+
 // candles: [{ t (epoch ms, bar START), open, high, low, close }] in IST order.
+// The last candle may still be forming. Pass opts.liveBarT for that bar and
+// opts.now for the clock. opts.locks keeps a decision already taken on a bar.
 // Returns per-bar computed series plus the signal list and the final open position.
 function runStrategy(candles, lotSize, opts = {}) {
   const cfg = { ...DEFAULTS, ...opts };
@@ -115,6 +134,8 @@ function runStrategy(candles, lotSize, opts = {}) {
   const st = supertrendSeries(candles, cfg.stPeriod, cfg.stMultiplier);
   const ema = emaSeries(closes, cfg.emaLength);
   const sr = pivotLevels(candles, cfg.srLeft, cfg.srRight);
+  const locks = Array.isArray(cfg.locks) ? cfg.locks : [];
+  const now = Number.isFinite(cfg.now) ? cfg.now : null;
 
   const signals = [];
   let position = null; // { side:'LONG'|'SHORT', entryPrice, entryTime, entryIndex, qty }
@@ -127,15 +148,18 @@ function runStrategy(candles, lotSize, opts = {}) {
     const dateKey = istDateKey(c.t);
     const dir = st.direction[i];
     const timeIST = istTimeStr(c.t);
+    const live = cfg.liveBarT === c.t;
+    const clock = live && now ? istParts(now) : p;
+    const here = locks.filter((l) => l.barT === c.t);
+    const entryLock = here.find((l) => l.type === 'BUY CE' || l.type === 'BUY PE');
+    const exitLock = here.find((l) => l.type === 'EXIT CE' || l.type === 'EXIT PE' || l.type === 'SQOFF');
 
     const isMarketOpenBar = p.hour === 9 && p.minute === 15;
     const longCond = (st.flipped[i] && dir < 0) || (isMarketOpenBar && dir < 0);
     const shortCond = (st.flipped[i] && dir > 0) || (isMarketOpenBar && dir > 0);
 
-    // A 5-minute close between 09:15 and 09:30 can open the trade before this
-    // 15-minute bar exists. Once the 09:15 bar closes, that entry is kept and
-    // the open-bar rule does not fire a second time. Exits still start on the
-    // next 15-minute bar.
+    // A fast open trigger can fill before this bar's own rule. It is kept, and
+    // the open-bar rule does not fire a second time.
     const early = cfg.earlyEntry;
     if (!position && early && early.dateKey === dateKey && isMarketOpenBar) {
       position = {
@@ -150,6 +174,7 @@ function runStrategy(candles, lotSize, opts = {}) {
       const type = early.side === 'LONG' ? 'BUY CE' : 'BUY PE';
       signals.push({
         t: early.t,
+        barT: c.t,
         timeIST: early.timeIST,
         dateKey,
         type,
@@ -160,42 +185,83 @@ function runStrategy(candles, lotSize, opts = {}) {
       });
     }
 
-    // --- Entries (Pine section 3) ---
-    if (!position && !isSquareOffBar(p) && squaredOffDate !== dateKey) {
-      if (longCond) {
+    // --- Entries (Pine section 3). A lock is the moment already taken. ---
+    if (!position && squaredOffDate !== dateKey && (entryLock || !isSquareOffBar(clock))) {
+      let take = null;
+      if (entryLock) {
+        take = {
+          side: entryLock.side,
+          type: entryLock.type,
+          price: entryLock.price,
+          t: entryLock.t,
+          timeIST: entryLock.timeIST,
+          reason: entryLock.reason,
+          levels: lockedLevels(entryLock, entryLock.side, entryLock.price, i, st, sr),
+        };
+      } else if (longCond || shortCond) {
+        const side = longCond ? 'LONG' : 'SHORT';
+        const when = live && now ? now : c.t;
+        take = {
+          side,
+          type: side === 'LONG' ? 'BUY CE' : 'BUY PE',
+          price: c.close,
+          t: when,
+          timeIST: live && now ? istTimeStr(now) : timeIST,
+          reason: st.flipped[i]
+            ? (side === 'LONG' ? 'Supertrend flip to bullish' : 'Supertrend flip to bearish')
+            : (side === 'LONG' ? 'Market open, trend bullish' : 'Market open, trend bearish'),
+          levels: seedLevels(side, c.close, i, st, sr),
+        };
+      }
+      if (take) {
         position = {
-          side: 'LONG',
-          entryPrice: c.close,
-          entryTime: c.t,
+          side: take.side,
+          entryPrice: take.price,
+          entryTime: take.t,
           entryIndex: i,
           qty: lotSize,
-          ...seedLevels('LONG', c.close, i, st, sr),
+          ...take.levels,
         };
         entryIndex = i;
-        signals.push({ t: c.t, timeIST, dateKey, type: 'BUY CE', side: 'LONG', price: c.close, qty: lotSize, reason: st.flipped[i] ? 'Supertrend flip to bullish' : 'Market open, trend bullish' });
-      } else if (shortCond) {
-        position = {
-          side: 'SHORT',
-          entryPrice: c.close,
-          entryTime: c.t,
-          entryIndex: i,
+        signals.push({
+          t: take.t,
+          barT: c.t,
+          timeIST: take.timeIST,
+          dateKey,
+          type: take.type,
+          side: take.side,
+          price: take.price,
           qty: lotSize,
-          ...seedLevels('SHORT', c.close, i, st, sr),
-        };
-        entryIndex = i;
-        signals.push({ t: c.t, timeIST, dateKey, type: 'BUY PE', side: 'SHORT', price: c.close, qty: lotSize, reason: st.flipped[i] ? 'Supertrend flip to bearish' : 'Market open, trend bearish' });
+          reason: take.reason,
+        });
       }
     }
 
-    // Exits use the levels from previous bars, then the survivors are refreshed.
-    if (position && i > entryIndex) {
+    // Finished bars exit on a later bar. The live bar can exit once price has
+    // traded off the entry. A lock replays the moment that already fired.
+    const moved = position != null && c.close !== position.entryPrice;
+    const sameBarLater = live && position != null && position.entryTime < (now || c.t) && moved;
+    if (position && (i > entryIndex || sameBarLater)) {
       const long = position.side === 'LONG';
-      let reason = marketExitReason(position, c.close);
-      if (!reason && ((long && c.close < ema[i]) || (!long && c.close > ema[i]))) reason = 'Close crossed EMA 13';
+      const useLock = exitLock && exitLock.side === position.side && (i > entryIndex || exitLock.t > position.entryTime);
+      let reason = null;
+      let price = c.close;
+      let when = live && now ? now : c.t;
+      let whenIST = live && now ? istTimeStr(now) : timeIST;
+      let type = long ? 'EXIT CE' : 'EXIT PE';
+      if (useLock) {
+        reason = exitLock.reason;
+        price = exitLock.price;
+        when = exitLock.t;
+        whenIST = exitLock.timeIST;
+        if (exitLock.type === 'SQOFF') type = 'SQOFF';
+      } else if (!exitLock) {
+        reason = marketExitReason(position, c.close);
+        if (!reason && ((long && c.close < ema[i]) || (!long && c.close > ema[i]))) reason = 'Close crossed EMA 13';
+      }
       if (reason) {
-        const type = long ? 'EXIT CE' : 'EXIT PE';
-        const pts = long ? c.close - position.entryPrice : position.entryPrice - c.close;
-        signals.push({ t: c.t, timeIST, dateKey, type, side: position.side, price: c.close, qty: position.qty, points: round2(pts), reason });
+        const pts = long ? price - position.entryPrice : position.entryPrice - price;
+        signals.push({ t: when, barT: c.t, timeIST: whenIST, dateKey, type, side: position.side, price, qty: position.qty, points: round2(pts), reason });
         position = null;
       } else {
         refreshLevels(position, c.close, i, st, sr);
@@ -203,15 +269,29 @@ function runStrategy(candles, lotSize, opts = {}) {
     }
 
     // --- End-of-day square-off (Pine section 5) ---
-    if (position && isSquareOffBar(p)) {
-      const pts = position.side === 'LONG' ? c.close - position.entryPrice : position.entryPrice - c.close;
-      signals.push({ t: c.t, timeIST, dateKey, type: 'SQOFF', side: position.side, price: c.close, qty: position.qty, points: round2(pts), reason: '15:10 square-off' });
+    if (position && isSquareOffBar(clock)) {
+      const sq = exitLock && exitLock.type === 'SQOFF' ? exitLock : null;
+      const price = sq ? sq.price : c.close;
+      const when = sq ? sq.t : (live && now ? now : c.t);
+      const whenIST = sq ? sq.timeIST : (live && now ? istTimeStr(now) : timeIST);
+      const pts = position.side === 'LONG' ? price - position.entryPrice : position.entryPrice - price;
+      signals.push({
+        t: when,
+        barT: c.t,
+        timeIST: whenIST,
+        dateKey,
+        type: 'SQOFF',
+        side: position.side,
+        price,
+        qty: position.qty,
+        points: round2(pts),
+        reason: sq ? sq.reason : '15:10 square-off',
+      });
       position = null;
       squaredOffDate = dateKey;
     }
   }
 
-  const last = candles.length - 1;
   return {
     stValue: st.value,
     direction: st.direction,

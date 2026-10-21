@@ -10,13 +10,12 @@ const { FixtureProvider } = require('./data/fixture');
 const { runStrategy } = require('./strategy');
 const { nearestListedStrike, nearestStepStrike } = require('./strikes');
 const { buildPaperTrades, summarizePaper } = require('./paper');
-const { istParts, istDateKey, istTimeStr, istFullStr } = require('./time');
+const { istParts, istDateKey, istTimeStr, istFullStr, istToEpoch } = require('./time');
 const { openingRead } = require('./predict');
-const { earlyTrigger, priorSessionSide } = require('./early');
 
-// Engine: keeps warm candles per symbol, runs the strategy over CLOSED candles
-// only (bar-close convention, same as the paper log), tracks live LTP, and
-// exposes a plain state object for the dashboard / API.
+// Engine: keeps warm candles per symbol, runs the strategy on finished bars
+// plus the candle that is still trading, and locks a signal at the moment it
+// fires so a later tick cannot take it back. Live LTP updates that candle.
 
 function recentDateKeys(days) {
   const keys = [];
@@ -32,6 +31,36 @@ function isWeekend(dateKey) {
 
 function round2(n) {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+
+function snapshotLevels(position) {
+  if (!position) return null;
+  return {
+    initialStop: position.initialStop ?? null,
+    stopLoss: position.stopLoss ?? null,
+    trailingStop: position.trailingStop ?? null,
+    target: position.target ?? null,
+    trailingTarget: position.trailingTarget ?? null,
+    peak: position.peak,
+    trailOn: !!position.trailOn,
+  };
+}
+
+function contractPremium(book, strike, right) {
+  if (!book || strike == null || !right) return null;
+  const key = book.instruments[`${strike}|${right}`];
+  const px = key && book.ltp ? Number(book.ltp[key]) : NaN;
+  return round2(px);
+}
+
+// Start of the bar that is trading now, labeled by its open.
+// At 11:24 on a 15-minute book that bar opened at 11:15. Null outside 09:15–15:30.
+function liveBarStart(now, tfMin) {
+  const p = istParts(now);
+  const mins = p.hour * 60 + p.minute;
+  if (mins < 9 * 60 + 15 || mins >= 15 * 60 + 30) return null;
+  const slot = Math.floor(mins / tfMin) * tfMin;
+  return istToEpoch(istDateKey(now), Math.floor(slot / 60), slot % 60);
 }
 
 function pickStrike(price, symbol, book) {
@@ -104,6 +133,7 @@ class Engine {
     this.trackedOptionKeys = new Set();
     this.paperFp = '';
     this.earlyMarks = {};
+    this.moments = {}; // symbolId -> decisions taken on a live candle
     for (const s of SYMBOLS) {
       this.candles[s.id] = new Map();
       this.fastCandles[s.id] = new Map();
@@ -143,7 +173,26 @@ class Engine {
     const isToday = dateKey === istDateKey(Date.now());
     const rows = await provider.getCandlesForDate(symbol, dateKey, config.timeframeMinutes, isToday);
     const map = this.candles[symbol.id];
-    for (const c of rows) map.set(c.t, c);
+    const now = Date.now();
+    const tfMs = config.timeframeMinutes * 60000;
+    for (const c of rows) {
+      const prev = map.get(c.t);
+      // The bar still trading keeps the higher high and lower low already
+      // seen on the feed. Its close is the latest price.
+      if (prev && c.t + tfMs > now) {
+        const ltp = this.ltp[symbol.id];
+        map.set(c.t, {
+          t: c.t,
+          open: c.open,
+          high: Math.max(prev.high, c.high),
+          low: Math.min(prev.low, c.low),
+          close: Number.isFinite(ltp) ? ltp : c.close,
+          volume: c.volume || 0,
+        });
+      } else {
+        map.set(c.t, c);
+      }
+    }
   }
 
   async loadWarmup(provider) {
@@ -193,7 +242,6 @@ class Engine {
     if (!provider || provider.name !== 'UPSTOX') return;
     const today = istDateKey(Date.now());
     const now = Date.now();
-    const tfMs = config.timeframeMinutes * 60000;
     for (const symbol of SYMBOLS) {
       try {
         let book = this.optionBooks[symbol.id];
@@ -225,10 +273,7 @@ class Engine {
         }
         book.ltp = ltp;
 
-        const closed = [...this.candles[symbol.id].values()].filter((c) => c.t + tfMs <= now).sort((a, b) => a.t - b.t);
-        const scout = runStrategy(closed, symbol.lotSize);
-        const early = this.earlyEntryFor(symbol, closed, scout, now);
-        const run = early ? runStrategy(closed, symbol.lotSize, { earlyEntry: early }) : scout;
+        const { run } = this.evaluate(symbol, Date.now());
         const keys = new Set();
         for (const s of run.signals) {
           if (s.dateKey !== today || (s.type !== 'BUY CE' && s.type !== 'BUY PE')) continue;
@@ -262,10 +307,121 @@ class Engine {
     if (this.feed && this.trackedOptionKeys.size) this.feed.subscribe([...this.trackedOptionKeys]);
   }
 
+  // The bar that is open now. Its close is the latest price, and its high and
+  // low only widen. A tick before the poll arrives starts the bar.
+  touchLiveCandle(symbolId, price) {
+    if (!Number.isFinite(price)) return;
+    const now = Date.now();
+    const start = liveBarStart(now, config.timeframeMinutes);
+    const map = this.candles[symbolId];
+    if (start == null || !map) return;
+    let bar = map.get(start);
+    if (!bar) {
+      map.set(start, { t: start, open: price, high: price, low: price, close: price, volume: 0, provisional: true });
+      return;
+    }
+    bar.close = price;
+    if (price > bar.high) bar.high = price;
+    if (price < bar.low) bar.low = price;
+  }
+
+  // Finished bars, plus the one bar still trading. A provisional bar that has
+  // reached its close becomes a normal bar so a decision taken on it remains.
+  candlesNow(symbolId, now) {
+    const tfMs = config.timeframeMinutes * 60000;
+    const map = this.candles[symbolId];
+    const start = liveBarStart(now, config.timeframeMinutes);
+    for (const bar of map.values()) {
+      if (bar.provisional && bar.t + tfMs <= now) delete bar.provisional;
+    }
+    const all = [...map.values()].sort((a, b) => a.t - b.t);
+    const forming = start != null ? map.get(start) || null : null;
+    const closed = all.filter((c) => c !== forming && c.t + tfMs <= now);
+    const series = forming ? closed.concat([forming]) : closed;
+    return { closed, forming, series };
+  }
+
+  evaluate(symbol, now) {
+    const pack = this.candlesNow(symbol.id, now);
+    const day = istDateKey(now);
+    const locks = (this.moments[symbol.id] || []).filter((m) => m.dateKey === day);
+    const run = runStrategy(pack.series, symbol.lotSize, {
+      locks,
+      liveBarT: pack.forming ? pack.forming.t : null,
+      now,
+    });
+    this.commitLiveMoment(symbol, run, pack.forming, now);
+    return { ...pack, run };
+  }
+
+  // The first time the live candle breaks a level, keep that price, that
+  // clock time, and the option premium. Later ticks replay the lock.
+  commitLiveMoment(symbol, run, forming, now) {
+    if (!forming) return;
+    const book = this.optionBooks[symbol.id];
+    const day = istDateKey(now);
+    const locks = (this.moments[symbol.id] || []).filter((m) => m.dateKey === day);
+    const map = new Map(locks.map((m) => [`${m.barT}|${m.type}`, m]));
+    let held = null;
+    run.signals = run.signals.map((s) => {
+      const entry = s.type === 'BUY CE' || s.type === 'BUY PE';
+      const barT = s.barT != null ? s.barT : s.t;
+      if (barT !== forming.t) {
+        held = entry ? { price: s.price, right: s.type === 'BUY CE' ? 'CE' : 'PE' } : null;
+        return s;
+      }
+      const key = `${barT}|${s.type}`;
+      let lock = map.get(key);
+      const right = entry ? (s.type === 'BUY CE' ? 'CE' : 'PE') : (held ? held.right : (s.side === 'LONG' ? 'CE' : 'PE'));
+      const strike = pickStrike(entry || !held ? (lock ? lock.price : s.price) : held.price, symbol, book);
+      if (!lock) {
+        lock = {
+          dateKey: day,
+          barT,
+          t: s.t,
+          timeIST: s.timeIST,
+          type: s.type,
+          side: s.side,
+          price: s.price,
+          qty: s.qty,
+          reason: s.reason,
+          premium: contractPremium(book, strike, right),
+          levels: entry ? snapshotLevels(run.position) : null,
+        };
+        map.set(key, lock);
+      } else if (lock.premium == null) {
+        lock.premium = contractPremium(book, strike, right);
+      }
+      held = entry ? { price: lock.price, right: s.type === 'BUY CE' ? 'CE' : 'PE' } : null;
+      const row = { ...s, barT, t: lock.t, timeIST: lock.timeIST, price: lock.price, reason: lock.reason };
+      if (lock.premium != null) row.premium = lock.premium;
+      return row;
+    });
+    if (run.position) {
+      const entryLock = [...map.values()].find((m) => (m.type === 'BUY CE' || m.type === 'BUY PE') && m.t === run.position.entryTime);
+      if (entryLock && entryLock.barT === forming.t) entryLock.levels = snapshotLevels(run.position);
+    }
+    this.moments[symbol.id] = [...map.values()];
+  }
+
+  liveCandleView(ltp, now, forming) {
+    const start = liveBarStart(now, config.timeframeMinutes);
+    if (start == null || !Number.isFinite(ltp)) return null;
+    const same = forming && forming.t === start ? forming : null;
+    return {
+      timeIST: istTimeStr(start),
+      open: same ? round2(same.open) : null,
+      high: same ? round2(Math.max(same.high, ltp)) : null,
+      low: same ? round2(Math.min(same.low, ltp)) : null,
+      close: round2(ltp),
+    };
+  }
+
   onFeedTick(tick) {
     const symbol = SYMBOLS.find((s) => s.upstoxKey === tick.instrumentKey);
     if (symbol) {
       this.ltp[symbol.id] = tick.ltp;
+      this.touchLiveCandle(symbol.id, tick.ltp);
     } else if (this.trackedOptionKeys.has(tick.instrumentKey)) {
       for (const book of Object.values(this.optionBooks)) {
         if (book && book.ltp) book.ltp[tick.instrumentKey] = tick.ltp;
@@ -299,7 +455,6 @@ class Engine {
 
   computeState() {
     const now = Date.now();
-    const tfMs = config.timeframeMinutes * 60000;
     const todayKey = istDateKey(now);
     const out = {
       status: 'live',
@@ -310,18 +465,8 @@ class Engine {
     };
 
     for (const symbol of SYMBOLS) {
-      const all = [...this.candles[symbol.id].values()].sort((a, b) => a.t - b.t);
-      const closed = all.filter((c) => c.t + tfMs <= now);
-      const forming = all.length && all[all.length - 1].t + tfMs > now ? all[all.length - 1] : null;
-      const scout = runStrategy(closed, symbol.lotSize);
-      const early = this.earlyEntryFor(symbol, closed, scout, now);
-      const run = this.ensureEarlyVisible(
-        early ? runStrategy(closed, symbol.lotSize, { earlyEntry: early }) : scout,
-        early,
-        symbol.lotSize,
-        closed
-      );
-      const last = closed.length - 1;
+      const { closed, forming, series, run } = this.evaluate(symbol, now);
+      const last = series.length - 1;
 
       const todayCandles = closed.filter((c) => istDateKey(c.t) === todayKey);
       const prevDayCandles = closed.filter((c) => istDateKey(c.t) !== todayKey);
@@ -330,12 +475,12 @@ class Engine {
         ? this.ltp[symbol.id]
         : forming
           ? forming.close
-          : last >= 0
-            ? closed[last].close
+          : closed.length
+            ? closed[closed.length - 1].close
             : null;
 
       const book = this.optionBooks[symbol.id];
-      const struck = withStrikes(this.stampEarlyPremium(symbol, run.signals, book), closed, run, symbol, book, this.optionCandles);
+      const struck = withStrikes(this.stampEarlyPremium(symbol, run.signals, book), series, run, symbol, book, this.optionCandles);
       const todaySignals = struck.filter((s) => s.dateKey === todayKey);
       const closedToday = todaySignals.filter((s) => s.points !== undefined);
       const dayPoints = closedToday.reduce((a, s) => a + s.points, 0);
@@ -373,7 +518,8 @@ class Engine {
         prevClose,
         change: ltp != null && prevClose != null ? Math.round((ltp - prevClose) * 100) / 100 : null,
         changePct: ltp != null && prevClose ? Math.round(((ltp - prevClose) / prevClose) * 10000) / 100 : null,
-        lastCandleTimeIST: last >= 0 ? istTimeStr(closed[last].t) : null,
+        lastCandleTimeIST: closed.length ? istTimeStr(closed[closed.length - 1].t) : null,
+        liveCandle: this.liveCandleView(ltp, now, forming),
         supertrend: last >= 0 ? Math.round(run.stValue[last] * 100) / 100 : null,
         direction: last >= 0 ? run.direction[last] : null, // -1 bullish, +1 bearish
         ema13: last >= 0 && Number.isFinite(run.ema[last]) ? Math.round(run.ema[last] * 100) / 100 : null,
@@ -383,8 +529,8 @@ class Engine {
         signalsToday: todaySignals,
         dayPoints: Math.round(dayPoints * 100) / 100,
         prediction: openingRead([...(this.fastCandles[symbol.id] || new Map()).values()], ltp, now),
-        chart: closed.slice(-100).map((c, k, arr) => {
-          const gi = closed.length - arr.length + k;
+        chart: series.slice(-100).map((c, k, arr) => {
+          const gi = series.length - arr.length + k;
           return {
             timeIST: istTimeStr(c.t),
             close: c.close,
@@ -415,49 +561,6 @@ class Engine {
     return out;
   }
 
-  earlyEntryFor(symbol, closed, run, now) {
-    const side = priorSessionSide(closed, run.direction, now);
-    const minutes = [...(this.fastCandles[symbol.id] || new Map()).values()];
-    return earlyTrigger(minutes, side, now);
-  }
-
-  ensureEarlyVisible(run, early, lotSize, closed) {
-    if (!early) return run;
-    const present = run.signals.some((s) => s.t === early.t && (s.type === 'BUY CE' || s.type === 'BUY PE'));
-    if (present) return run;
-    const type = early.side === 'LONG' ? 'BUY CE' : 'BUY PE';
-    const i = closed.length - 1;
-    const st = i >= 0 ? run.stValue[i] : null;
-    const stop = early.side === 'LONG' && st < early.price ? st : early.side === 'SHORT' && st > early.price ? st : null;
-    const pivot = i >= 0 ? (early.side === 'LONG' ? run.resAt[i] : run.supAt[i]) : null;
-    const targetOk = Number.isFinite(pivot) && (early.side === 'LONG' ? pivot > early.price : pivot < early.price);
-    return {
-      ...run,
-      signals: run.signals.concat({
-        t: early.t,
-        timeIST: early.timeIST,
-        dateKey: early.dateKey,
-        type,
-        side: early.side,
-        price: early.price,
-        qty: lotSize,
-        reason: early.reason,
-      }),
-      position: run.position || {
-        side: early.side,
-        entryPrice: early.price,
-        entryTime: early.t,
-        entryIndex: closed.length,
-        qty: lotSize,
-        initialStop: stop,
-        stopLoss: stop,
-        trailingStop: stop,
-        target: targetOk ? pivot : null,
-        trailingTarget: null,
-      },
-    };
-  }
-
   stampEarlyPremium(symbol, signals, book) {
     const day = istDateKey(Date.now());
     return signals.map((s) => {
@@ -483,8 +586,10 @@ class Engine {
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       this.earlyMarks = saved.earlyMarks || {};
+      this.moments = saved.moments || {};
     } catch (_) {
       this.earlyMarks = {};
+      this.moments = {};
     }
   }
 
@@ -501,7 +606,7 @@ class Engine {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
       path.join(dir, `${day}.json`),
-      JSON.stringify({ date: day, ...paper, earlyMarks: this.earlyMarks, savedAt: new Date().toISOString() }, null, 2)
+      JSON.stringify({ date: day, ...paper, earlyMarks: this.earlyMarks, moments: this.moments, savedAt: new Date().toISOString() }, null, 2)
     );
   }
 

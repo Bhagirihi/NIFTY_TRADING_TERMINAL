@@ -265,7 +265,7 @@ function renderCard(id, s, width) {
   const pairs = [
     ['Supertrend', fmt(s.supertrend)],
     ['EMA 13', fmt(s.ema13)],
-    ['Candle', s.lastCandleTimeIST ? `${s.lastCandleTimeIST}` : '—'],
+    ['Candle', s.liveCandle && s.liveCandle.timeIST ? green(`${s.liveCandle.timeIST} live`) : (s.lastCandleTimeIST || '—')],
     ['Day', day],
   ];
   if (width >= 46) {
@@ -381,13 +381,12 @@ function renderDashboard(state, opts = {}) {
   const gap = Math.max(1, width - visLen(title) - visLen(mark));
   lines.push(clipAnsi(title + ' '.repeat(gap) + mark, width));
   const clock = state && state.updatedAt ? state.updatedAt : 'waiting';
-  const session = dim('5m entry 09:15–09:30');
-  const after = dim('15m after 09:30');
+  const session = dim('15m book · live candle');
   const when = dim(clock);
-  const metaGap = Math.max(1, width - visLen(session) - visLen(after) - visLen(when) - 2);
-  const meta = visLen(session) + visLen(after) + visLen(when) + 2 <= width
-    ? session + '  ' + after + ' '.repeat(metaGap) + when
-    : dim(clipAnsi(`${clock}  ·  5m until 09:30, then 15m`, width));
+  const metaGap = Math.max(1, width - visLen(session) - visLen(when) - 2);
+  const meta = visLen(session) + visLen(when) + 2 <= width
+    ? session + ' '.repeat(metaGap) + when
+    : dim(clipAnsi(`${clock}  ·  15m live`, width));
   lines.push(clipAnsi(meta, width));
   lines.push(rule(width));
 
@@ -424,7 +423,7 @@ function renderDashboard(state, opts = {}) {
   if (!signals.length) lines.push(dim('No signals yet today.'));
   else lines.push(...renderTable(SIGNAL_COLS, signals, width));
 
-  const hint = dim('Signals only — no orders.  5m open · 15m book · ST 10/3 · 15:10 square-off');
+  const hint = dim('Signals only — no orders.  15m live candle · ST 10/3 · 15:10 square-off');
   const quit = dim('q quit');
   const url = opts.url ? dim(opts.url) : '';
   const footBits = [hint, url, quit].filter(Boolean);

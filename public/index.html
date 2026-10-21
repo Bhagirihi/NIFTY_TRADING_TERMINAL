@@ -92,7 +92,7 @@
 <div class="section">
   <div class="card">
     <h2>Today's signals</h2>
-    <p style="color:var(--dim);font-size:12.5px;margin:6px 0 10px;">Strike is the nearest listed option. Premium is that contract at the signal bar. A 15-minute close through the Supertrend stop, the ratcheted trailing stop, the pivot target, or the ATR trailing target closes the paper trade.</p>
+    <p style="color:var(--dim);font-size:12.5px;margin:6px 0 10px;">Strike is the nearest listed option. Premium is that contract at the moment of the signal. The 15-minute candle still trading books the trade when price breaks the Supertrend stop, the trailing stop, the pivot target, or the ATR trailing target. That moment is kept.</p>
     <div class="scroll">
     <table>
       <thead><tr><th>Time (IST)</th><th>Index</th><th>Signal</th><th>Strike</th><th>Premium</th><th>Stop</th><th>Target</th><th>Points</th><th>Reason</th></tr></thead>
@@ -103,8 +103,7 @@
 </div>
 
 <footer>
-  Signals only — this dashboard never places orders. Entries/exits are booked at the signal bar's close
-  (15-minute bars, bar-close convention). From 09:15 to 09:30 the first 5-minute candle that closes with the trend books the entry. After 09:30, entries and exits follow the 15-minute Supertrend. Supertrend 10 / 3.0 stop and trail, pivot target, ATR trailing target, EMA-13, 15:10 square-off.
+  Signals only — this dashboard never places orders. Entries and exits are booked on the live 15-minute candle, from the open until the 15:10 square-off. Supertrend 10 / 3.0 stop and trail, pivot target, ATR trailing target, EMA-13.
 </footer>
 
 <script>
@@ -171,6 +170,11 @@ function predictHtml(s) {
   return `<div class="predict"><span>Open read</span><b class="${cls}">${head}</b><span>${bits}</span></div>`;
 }
 
+function candleLabel(s) {
+  if (s.liveCandle && s.liveCandle.timeIST) return s.liveCandle.timeIST + ' live';
+  return s.lastCandleTimeIST ? s.lastCandleTimeIST + ' closed' : '—';
+}
+
 function sigClass(type) {
   if (type === 'BUY CE') return 'sig-long';
   if (type === 'BUY PE') return 'sig-short';
@@ -193,7 +197,7 @@ function structureKey(state) {
   for (const [id, s] of Object.entries(state.symbols || {})) {
     const p = s.position;
     const pred = s.prediction;
-    slim[id] = [s.lastCandleTimeIST, s.supertrend, s.direction, s.ema13, s.support, s.resistance, s.dayPoints, p && p.side, p && p.strike, p && p.stopLoss, p && p.trailingStop, p && p.target, p && p.trailingTarget, p && p.entryTimeIST, pred && pred.label, pred && pred.minutes, (pred && pred.windows || []).map((w) => w.bias).join(','), (s.signalsToday || []).map((x) => [x.t, x.type, x.strike, x.premium, x.stopLoss, x.target].join('|')).join(','), (s.chart || []).length];
+    slim[id] = [s.lastCandleTimeIST, s.liveCandle && s.liveCandle.timeIST, s.supertrend, s.direction, s.ema13, s.support, s.resistance, s.dayPoints, p && p.side, p && p.strike, p && p.stopLoss, p && p.trailingStop, p && p.target, p && p.trailingTarget, p && p.entryTimeIST, pred && pred.label, pred && pred.minutes, (pred && pred.windows || []).map((w) => w.bias).join(','), (s.signalsToday || []).map((x) => [x.t, x.type, x.strike, x.premium, x.stopLoss, x.target].join('|')).join(','), (s.chart || []).length];
   }
   const fills = (state.paper && state.paper.trades || []).map((t) => [t.indexId, t.entryT, t.status, t.entryPremium, t.exitPremium].join('|')).join(';');
   return JSON.stringify([state.status, state.source, state.feed, state.error, slim, fills]);
@@ -238,6 +242,11 @@ function patchPrices(state) {
     if (atm) {
       const text = fmtStrike(currentStrike(id, s));
       if (atm.textContent !== text) atm.textContent = text;
+    }
+    const candle = card.querySelector('[data-field="candle"]');
+    if (candle) {
+      const text = candleLabel(s);
+      if (candle.textContent !== text) candle.textContent = text;
     }
     const openPts = card.querySelector('[data-field="openpts"]');
     if (openPts && s.position) {
@@ -337,7 +346,7 @@ function render(state) {
         <span>Supertrend</span><b>${fmt(s.supertrend)}</b>
         <span>Trend</span><b>${trendTxt}</b>
         <span>EMA 13</span><b>${fmt(s.ema13)}</b>
-        <span>Last closed candle</span><b>${s.lastCandleTimeIST || '—'} IST</b>
+        <span>Candle</span><b data-field="candle">${candleLabel(s)}</b>
         <span>Day P&amp;L (closed trades)</span><b class="${s.dayPoints >= 0 ? 'up' : 'down'}">${fmt(s.dayPoints)} pts</b>
       </div>
       ${positionHtml(s)}

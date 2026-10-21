@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-19",
+  "trades": [
+    {
+      "index": "BANKNIFTY",
+      "indexId": "BANKNIFTY",
+      "side": "BUY PE",
+      "strike": 55700,
+      "right": "PE",
+      "qty": 30,
+      "entryTime": "09:20",
+      "entryT": 1792381800000,
+      "entryPremium": 493,
+      "investment": 14790,
+      "stopLoss": 56018.32,
+      "target": 55526.3,
+      "entryReason": "5-minute close confirms the open trend",
+      "status": "CLOSED",
+      "exitTime": "09:45",
+      "exitT": 1792383300000,
+      "exitPremium": 560,
+      "exitReason": "Target",
+      "premiumPoints": 67,
+      "pnl": 2010
+    },
+    {
+      "index": "NIFTY 50",
+      "indexId": "NIFTY",
+      "side": "BUY CE",
+      "strike": 23150,
+      "right": "CE",
+      "qty": 65,
+      "entryTime": "09:20",
+      "entryT": 1792381800000,
+      "entryPremium": 11.3,
+      "investment": 734.5,
+      "stopLoss": 23191.75,
+      "target": null,
+      "entryReason": "5-minute close confirms the open trend",
+      "status": "CLOSED",
+      "exitTime": "09:45",
+      "exitT": 1792383300000,
+      "exitPremium": 30.15,
+      "exitReason": "Close crossed EMA 13",
+      "premiumPoints": 18.85,
+      "pnl": 1225.25
+    }
+  ],
+  "realized": 3235.25,
+  "unrealized": 0,
+  "total": 3235.25,
+  "earlyMarks": {
+    "NIFTY": {
+      "day": "2026-10-19",
+      "t": 1792381800000,
+      "premium": 11.3,
+      "strike": 23150,
+      "right": "CE"
+    },
+    "BANKNIFTY": {
+      "day": "2026-10-19",
+      "t": 1792381800000,
+      "premium": 493,
+      "strike": 55700,
+      "right": "PE"
+    }
+  },
+  "savedAt": "2026-10-19T07:48:52.973Z"
+}

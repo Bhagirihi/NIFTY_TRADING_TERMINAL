@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-21",
+  "trades": [
+    {
+      "index": "BANKNIFTY",
+      "indexId": "BANKNIFTY",
+      "side": "BUY PE",
+      "strike": 55800,
+      "right": "PE",
+      "qty": 30,
+      "entryTime": "09:15",
+      "entryT": 1792554300000,
+      "entryPremium": 398.1,
+      "investment": 11943,
+      "stopLoss": 55801.95,
+      "target": 55331.1,
+      "entryReason": "Market open, trend bearish",
+      "status": "CLOSED",
+      "exitTime": "09:30",
+      "exitT": 1792555200000,
+      "exitPremium": 384,
+      "exitReason": "Close crossed EMA 13",
+      "premiumPoints": -14.1,
+      "pnl": -423
+    },
+    {
+      "index": "NIFTY 50",
+      "indexId": "NIFTY",
+      "side": "BUY CE",
+      "strike": 23100,
+      "right": "CE",
+      "qty": 65,
+      "entryTime": "09:15",
+      "entryT": 1792554300000,
+      "entryPremium": 168.45,
+      "investment": 10949.25,
+      "stopLoss": 22853.46,
+      "target": 23175.25,
+      "entryReason": "Supertrend flip to bullish",
+      "status": "CLOSED",
+      "exitTime": "10:00",
+      "exitT": 1792557000000,
+      "exitPremium": 110.55,
+      "exitReason": "Close crossed EMA 13",
+      "premiumPoints": -57.9,
+      "pnl": -3763.5
+    },
+    {
+      "index": "NIFTY 50",
+      "indexId": "NIFTY",
+      "side": "BUY PE",
+      "strike": 22900,
+      "right": "PE",
+      "qty": 65,
+      "entryTime": "11:15",
+      "entryT": 1792561500000,
+      "entryPremium": 173.7,
+      "investment": 11290.5,
+      "stopLoss": 23103.53,
+      "target": 22845,
+      "entryReason": "Supertrend flip to bearish",
+      "status": "CLOSED",
+      "exitTime": "11:30",
+      "exitT": 1792562400000,
+      "exitPremium": 209.45,
+      "exitReason": "Target",
+      "premiumPoints": 35.75,
+      "pnl": 2323.75
+    }
+  ],
+  "realized": -1862.75,
+  "unrealized": 0,
+  "total": -1862.75,
+  "earlyMarks": {
+    "BANKNIFTY": {
+      "day": "2026-10-21",
+      "t": 1792554600000,
+      "premium": 427.25,
+      "strike": 55600,
+      "right": "PE"
+    }
+  },
+  "moments": {
+    "NIFTY": [],
+    "BANKNIFTY": []
+  },
+  "savedAt": "2026-10-21T06:18:30.369Z"
+}
